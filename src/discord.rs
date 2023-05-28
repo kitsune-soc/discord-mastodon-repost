@@ -85,7 +85,7 @@ async fn repost(
         .ok_or_else(|| anyhow!("no messages in message command??"))?;
 
     let client = reqwest::Client::new();
-    let attachment_tempfiles: Vec<NamedTempFile> = message
+    let media_ids = message
         .attachments
         .iter()
         .map(|attachment| async {
@@ -98,24 +98,12 @@ async fn repost(
             let mut async_file = File::from_std(named_tempfile.reopen()?);
             tokio::io::copy_buf(&mut reader, &mut async_file).await?;
 
-            anyhow::Ok(named_tempfile)
-        })
-        .collect::<FuturesUnordered<_>>()
-        .try_collect()
-        .await?;
+            let mastodon_attachment = mastodon_client.media(named_tempfile, None).await?;
+            let mastodon_attachment = mastodon_client
+                .wait_for_processing(mastodon_attachment, PollingTime::default())
+                .await?;
 
-    let media_ids = attachment_tempfiles
-        .into_iter()
-        .map(|attachment| {
-            let mastodon_client = mastodon_client.clone();
-            async move {
-                let mastodon_attachment = mastodon_client.media(attachment, None).await?;
-                let mastodon_attachment = mastodon_client
-                    .wait_for_processing(mastodon_attachment, PollingTime::default())
-                    .await?;
-
-                anyhow::Ok(mastodon_attachment.id.to_string())
-            }
+            anyhow::Ok(mastodon_attachment.id.to_string())
         })
         .collect::<FuturesUnordered<_>>()
         .try_collect()
